@@ -1,8 +1,7 @@
 import os
 import json
-import telebot
+import requests
 from flask import Flask, request, abort
-from telebot.types import Update
 
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
 APP_URL = os.environ.get('APP_URL')
@@ -10,43 +9,73 @@ APP_URL = os.environ.get('APP_URL')
 if not TOKEN or not APP_URL:
     raise ValueError("❌ TELEGRAM_TOKEN and APP_URL must be set")
 
-bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-# ========== معالج بسيط جداً ==========
-@bot.message_handler(func=lambda message: True)
-def echo_all(message):
-    print(f"🔥🔥🔥 تم استلام رسالة: {message.text}")
-    bot.send_message(message.chat.id, f"تم استلام: {message.text}")
+# ========== دوال مساعدة ==========
+def send_message(chat_id, text):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": text
+    }
+    requests.post(url, json=payload)
+    print(f"📤 تم إرسال رسالة إلى {chat_id}: {text[:50]}...")
 
-# ========== مسار webhook ==========
+# ========== معالج webhook الرئيسي ==========
 @app.route('/', methods=['POST'])
 def webhook():
-    if request.headers.get('content-type') == 'application/json':
-        json_string = request.get_data().decode('utf-8')
-        print("📨 تم استلام POST")
-        update = Update.de_json(json_string)
-        bot.process_new_updates([update])
-        return ''
-    abort(403)
+    try:
+        data = request.get_json()
+        print("📨 تم استلام تحديث:", data)
+        
+        # التحقق من وجود رسالة
+        if "message" in data:
+            message = data["message"]
+            chat_id = message["chat"]["id"]
+            text = message.get("text", "")
+            
+            print(f"💬 رسالة من {chat_id}: {text}")
+            
+            # الرد على الرسالة
+            if text == "/start":
+                send_message(chat_id, "✅ البوت يعمل! هذا رد على /start")
+            else:
+                send_message(chat_id, f"أرسلت: {text}")
+        
+        return "OK", 200
+    except Exception as e:
+        print(f"❌ خطأ: {e}")
+        return "Error", 500
 
 @app.route('/', methods=['GET'])
 def index():
-    return 'Test Bot Running'
+    return 'Bot is running with direct API'
 
-@app.route('/debug')
-def debug():
+@app.route('/setup')
+def setup_webhook():
+    """صفحة لإعداد webhook يدوياً"""
+    url = f"https://api.telegram.org/bot{TOKEN}/setWebhook?url={APP_URL}/"
+    response = requests.get(url)
     return {
-        "handlers": len(bot.message_handlers),
-        "webhook": bot.get_webhook_info().url
+        "setup": response.json(),
+        "webhook_url": f"{APP_URL}/"
     }
 
-# ========== إعداد webhook ==========
-print("🔧 إعداد webhook...")
-bot.remove_webhook()
-bot.set_webhook(url=f"{APP_URL}/")
-print("🔧 Webhook set to:", APP_URL)
-print("🔧 Handlers:", len(bot.message_handlers))
+@app.route('/info')
+def webhook_info():
+    """صفحة لمعلومات webhook"""
+    url = f"https://api.telegram.org/bot{TOKEN}/getWebhookInfo"
+    response = requests.get(url)
+    return response.json()
+
+# ========== إعداد webhook عند بدء التشغيل ==========
+def setup():
+    print("🔧 جاري إعداد webhook...")
+    url = f"https://api.telegram.org/bot{TOKEN}/setWebhook?url={APP_URL}/"
+    response = requests.get(url).json()
+    print("🔧 نتيجة الإعداد:", response)
+
+setup()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
