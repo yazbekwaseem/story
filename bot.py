@@ -30,23 +30,11 @@ except Exception as e:
 
 user_states = {}
 
-# ========== دالة لفحص المعالجات المسجلة ==========
-def list_handlers():
-    """تعرض قائمة بمعالجات البوت المسجلة (للتشخيص)"""
-    handlers = bot.message_handlers
-    print(f"🔍 عدد معالجات الرسائل المسجلة: {len(handlers)}")
-    for i, handler in enumerate(handlers):
-        if handler['filters'] and hasattr(handler['filters'], 'commands'):
-            print(f"   - معالج {i+1}: أوامر = {handler['filters'].commands}")
-        else:
-            print(f"   - معالج {i+1}: بدون فلتر أمر")
-    print(f"🔍 عدد معالجات callback المسجلة: {len(bot.callback_query_handlers)}")
-
 # ========== معالج أمر /start ==========
 @bot.message_handler(commands=['start'])
 def start(message):
-    print("🚀 [start] تم استدعاء معالج /start من المستخدم", message.from_user.id)
-    print("🚀 [start] نص الرسالة:", message.text)
+    print("🚀🚀🚀 [start] تم استدعاء معالج /start من المستخدم", message.from_user.id)
+    print("🚀🚀🚀 [start] نص الرسالة:", message.text)
     
     user_id = message.from_user.id
     current_node = STORY.get("start", "intro")
@@ -69,7 +57,7 @@ def start(message):
             bot.send_photo(message.chat.id, photo=image_url, caption=text, reply_markup=markup)
         else:
             bot.send_message(message.chat.id, text, reply_markup=markup)
-        print("🚀 [start] تم إرسال الرد بنجاح")
+        print("🚀🚀🚀 [start] تم إرسال الرد بنجاح")
     except Exception as e:
         print(f"⚠️ [start] خطأ في الإرسال: {e}")
         bot.send_message(message.chat.id, f"[تعذر إرسال الصورة]\n\n{text}", reply_markup=markup)
@@ -77,8 +65,8 @@ def start(message):
 # ========== معالج الـ Callback ==========
 @bot.callback_query_handler(func=lambda call: True)
 def callback(call):
-    print("🚀 [callback] تم استدعاء معالج callback من المستخدم", call.from_user.id)
-    print("🚀 [callback] بيانات callback:", call.data)
+    print("🚀🚀🚀 [callback] تم استدعاء معالج callback من المستخدم", call.from_user.id)
+    print("🚀🚀🚀 [callback] بيانات callback:", call.data)
     
     user_id = call.from_user.id
     next_node_id = call.data
@@ -121,7 +109,7 @@ def callback(call):
                 text=text,
                 reply_markup=markup
             )
-        print("🚀 [callback] تم تعديل الرسالة بنجاح")
+        print("🚀🚀🚀 [callback] تم تعديل الرسالة بنجاح")
     except Exception as e:
         print(f"⚠️ [callback] فشل التعديل، إرسال رسالة جديدة: {e}")
         try:
@@ -129,7 +117,7 @@ def callback(call):
                 bot.send_photo(call.message.chat.id, photo=image_url, caption=text, reply_markup=markup)
             else:
                 bot.send_message(call.message.chat.id, text, reply_markup=markup)
-            print("🚀 [callback] تم إرسال رسالة جديدة بنجاح")
+            print("🚀🚀🚀 [callback] تم إرسال رسالة جديدة بنجاح")
         except Exception as e2:
             print(f"⚠️ [callback] فشل إرسال الرسالة الجديدة: {e2}")
             bot.send_message(call.message.chat.id, f"[تعذر إرسال الصورة]\n\n{text}", reply_markup=markup)
@@ -160,6 +148,10 @@ def webhook():
         
         update = Update.de_json(json_string)
         print("📨 [webhook] تم تحويل JSON إلى Update بنجاح")
+        print("📨 [webhook] نوع التحديث:", type(update))
+        
+        if hasattr(update, 'message') and update.message:
+            print("📨 [webhook] الرسالة:", update.message.text)
         
         # معالجة التحديث
         bot.process_new_updates([update])
@@ -185,24 +177,19 @@ def debug():
             "handlers_count": {
                 "message": len(bot.message_handlers),
                 "callback": len(bot.callback_query_handlers)
-            }
+            },
+            "message_handlers_commands": [
+                h['filters'].commands if h['filters'] and hasattr(h['filters'], 'commands') else None 
+                for h in bot.message_handlers
+            ]
         }
     except Exception as e:
         return {"error": str(e)}
 
-@app.route('/check_webhook')
-def check_webhook():
-    """فحص حالة webhook"""
-    try:
-        info = bot.get_webhook_info()
-        return {
-            "webhook_url": info.url,
-            "pending_updates": info.pending_update_count,
-            "last_error": info.last_error_message,
-            "is_working": info.url == f"{APP_URL}/"
-        }
-    except Exception as e:
-        return {"error": str(e)}
+# ========== التأكد من أن المعالجات مسجلة قبل إعداد webhook ==========
+print("🔧 [init] تم تسجيل معالجات البوت")
+print(f"🔧 [init] عدد معالجات الرسائل المسجلة: {len(bot.message_handlers)}")
+print(f"🔧 [init] عدد معالجات callback المسجلة: {len(bot.callback_query_handlers)}")
 
 # ========== إعداد webhook بعد تعريف جميع المعالجات ==========
 def setup_webhook():
@@ -211,16 +198,22 @@ def setup_webhook():
     bot.remove_webhook()
     webhook_url = f"{APP_URL}/"
     print(f"🔧 [setup] تعيين webhook إلى: {webhook_url}")
-    bot.set_webhook(url=webhook_url)
+    result = bot.set_webhook(url=webhook_url)
+    print(f"🔧 [setup] نتيجة تعيين webhook: {result}")
+    
+    # تأخير بسيط ثم التحقق
+    time.sleep(2)
     info = bot.get_webhook_info()
     print("🔧 [setup] معلومات webhook بعد التعيين:", info)
-    # التحقق من المعالجات المسجلة
-    list_handlers()
 
-# استدعاء إعداد webhook بعد تعريف المعالجات
+# استيراد time للتأخير
 import time
-time.sleep(1)  # تأخير بسيط لضمان اكتمال التحميل
+
+# استدعاء إعداد webhook
 setup_webhook()
+
+# تأكيد نهائي
+print("🔧 [init] ✅ تم الانتهاء من التهيئة. البوت جاهز لاستقبال الأوامر.")
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
