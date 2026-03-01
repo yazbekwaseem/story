@@ -29,18 +29,7 @@ except Exception as e:
 
 user_states = {}
 
-# دالة إعداد webhook
-def setup_webhook():
-    bot.remove_webhook()
-    webhook_url = f"{APP_URL}/"
-    bot.set_webhook(url=webhook_url)
-    info = bot.get_webhook_info()
-    print("🔗 Webhook set to:", webhook_url)
-    print("ℹ️ Webhook info:", info)
-
-# تنفيذ إعداد webhook فورًا
-setup_webhook()
-
+# ========== تعريف معالجات البوت أولاً ==========
 @bot.message_handler(commands=['start'])
 def start(message):
     print("📩 /start from user", message.from_user.id)
@@ -80,7 +69,6 @@ def callback(call):
         return
 
     if next_node_id == "start":
-        # محاكاة أمر /start
         fake_message = call.message
         fake_message.from_user = call.from_user
         start(fake_message)
@@ -132,6 +120,7 @@ def callback(call):
         replay_markup.add(InlineKeyboardButton("🔄 العب مرة أخرى", callback_data="start"))
         bot.send_message(call.message.chat.id, "🏁 انتهت القصة!", reply_markup=replay_markup)
 
+# ========== تعريف مسارات Flask ==========
 @app.route('/', methods=['GET', 'HEAD'])
 def index():
     return 'Bot is running'
@@ -155,6 +144,33 @@ def debug():
         "has_intro": "intro" in STORY,
         "has_start": "start" in STORY
     }
+
+@app.route('/check_webhook')
+def check_webhook():
+    try:
+        info = bot.get_webhook_info()
+        return {
+            "webhook_url": info.url,
+            "pending_updates": info.pending_update_count,
+            "last_error": info.last_error_message,
+            "is_working": info.url == f"{APP_URL}/"
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+# ========== إعداد webhook بعد تعريف جميع المعالجات ==========
+def setup_webhook():
+    bot.remove_webhook()
+    webhook_url = f"{APP_URL}/"
+    bot.set_webhook(url=webhook_url)
+    info = bot.get_webhook_info()
+    print("🔗 Webhook set to:", webhook_url)
+    print("ℹ️ Webhook info:", info)
+
+# تأخير إعداد webhook قليلاً للتأكد من تحميل كل شيء
+import time
+time.sleep(1)
+setup_webhook()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
