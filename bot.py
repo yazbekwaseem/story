@@ -4,50 +4,70 @@ import telebot
 from flask import Flask, request, abort
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, Update
 
-# تحميل التوكن و URL من البيئة (ضعها في Render Environment Variables)
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
-APP_URL = os.environ.get('APP_URL')  # مثل https://your-app.onrender.com
+APP_URL = os.environ.get('APP_URL')
+
+if not TOKEN or not APP_URL:
+    raise ValueError("❌ TELEGRAM_TOKEN and APP_URL must be set in environment variables")
 
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-# تحميل القصة
-with open("story.json", encoding="utf-8") as f:
-    STORY = json.load(f)
+# تحميل القصة مع معالجة الأخطاء
+try:
+    with open("story.json", encoding="utf-8") as f:
+        STORY = json.load(f)
+    print("✅ story.json loaded successfully")
+except Exception as e:
+    print("❌ Error loading story.json:", e)
+    STORY = {
+        "intro": {
+            "text": "⚠️ خطأ في تحميل القصة. يرجى الاتصال بالمطور.",
+            "buttons": []
+        }
+    }
 
-# تخزين حالة كل مستخدم
 user_states = {}
 
-# الـ Start handler
+# دالة إعداد webhook
+def setup_webhook():
+    bot.remove_webhook()
+    webhook_url = f"{APP_URL}/"
+    bot.set_webhook(url=webhook_url)
+    info = bot.get_webhook_info()
+    print("🔗 Webhook set to:", webhook_url)
+    print("ℹ️ Webhook info:", info)
+
+# تنفيذ إعداد webhook فورًا (سيتم مرة واحدة لكل عملية)
+setup_webhook()
+
 @bot.message_handler(commands=['start'])
 def start(message):
+    print("📩 /start from user", message.from_user.id)
     user_id = message.from_user.id
-    current_node = STORY.get("start", "intro")  # افتراضيًا "intro" من القصة السابقة
+    current_node = STORY.get("start", "intro")
     user_states[user_id] = current_node
     
     node = STORY.get(current_node)
     if not node:
-        bot.send_message(message.chat.id, "خطأ في القصة!")
+        bot.send_message(message.chat.id, "❌ خطأ في القصة!")
         return
     
     markup = InlineKeyboardMarkup()
     for btn in node.get("buttons", []):
-        markup.add(InlineKeyboardButton(
-            text=btn["text"],
-            callback_data=btn["next"]
-        ))
+        markup.add(InlineKeyboardButton(text=btn["text"], callback_data=btn["next"]))
     
     text = node["text"]
-    image_url = node.get("image")  # إذا كان هناك صورة من ImgBB
+    image_url = node.get("image")
     
     if image_url:
         bot.send_photo(message.chat.id, photo=image_url, caption=text, reply_markup=markup)
     else:
         bot.send_message(message.chat.id, text, reply_markup=markup)
 
-# الـ Callback handler
 @bot.callback_query_handler(func=lambda call: True)
 def callback(call):
+    # ... (نفس الكود السابق مع تحسينات)
     user_id = call.from_user.id
     next_node_id = call.data
     
@@ -55,25 +75,22 @@ def callback(call):
         bot.answer_callback_query(call.id, "ابدأ من جديد بـ /start")
         return
     
-    # إذا كان "start"، أعد التشغيل
     if next_node_id == "start":
-        start(call.message)
+        # محاكاة أمر /start
+        fake_message = call.message
+        fake_message.from_user = call.from_user
+        start(fake_message)
         return
     
-    # تحديث الحالة
     user_states[user_id] = next_node_id
-    
     node = STORY.get(next_node_id)
     if not node:
-        bot.answer_callback_query(call.id, "خطأ في القصة!")
+        bot.answer_callback_query(call.id, "❌ خطأ في القصة!")
         return
     
     markup = InlineKeyboardMarkup()
     for btn in node.get("buttons", []):
-        markup.add(InlineKeyboardButton(
-            text=btn["text"],
-            callback_data=btn["next"]
-        ))
+        markup.add(InlineKeyboardButton(text=btn["text"], callback_data=btn["next"]))
     
     text = node["text"]
     image_url = node.get("image")
@@ -94,7 +111,7 @@ def callback(call):
                 reply_markup=markup
             )
     except Exception as e:
-        # لو فشل التعديل، أرسل جديد
+        print("⚠️ Edit failed, sending new message:", e)
         if image_url:
             bot.send_photo(call.message.chat.id, photo=image_url, caption=text, reply_markup=markup)
         else:
@@ -102,16 +119,14 @@ def callback(call):
     
     bot.answer_callback_query(call.id)
     
-    # إذا نهاية، أضف زر إعادة
     if node.get("end"):
         replay_markup = InlineKeyboardMarkup()
-        replay_markup.add(InlineKeyboardButton("العب مرة أخرى", callback_data="start"))
-        bot.send_message(call.message.chat.id, "هل تريد اللعب من جديد؟", reply_markup=replay_markup)
+        replay_markup.add(InlineKeyboardButton("🔄 العب مرة أخرى", callback_data="start"))
+        bot.send_message(call.message.chat.id, "🏁 انتهت القصة!", reply_markup=replay_markup)
 
-# Flask للـ Webhook
 @app.route('/', methods=['GET', 'HEAD'])
 def index():
-    return ''
+    return 'Bot is running'
 
 @app.route('/', methods=['POST'])
 def webhook():
@@ -123,12 +138,10 @@ def webhook():
     else:
         abort(403)
 
+@app.route('/test')
+def test():
+    return '✅ Test endpoint works'
+
 if __name__ == '__main__':
-    # إزالة webhook قديم إن وجد
-    bot.remove_webhook()
-    # إعداد webhook جديد
-    bot.set_webhook(url=f"{APP_URL}/")
-    
-    # تشغيل Flask
     port = int(os.environ.get('PORT', 5000))
     app.run(debug=False, host='0.0.0.0', port=port)
