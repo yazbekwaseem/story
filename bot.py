@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import telebot
 from flask import Flask, request, abort
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, Update
@@ -30,63 +31,79 @@ except Exception as e:
 
 user_states = {}
 
-# ========== معالج أمر /start ==========
-@bot.message_handler(commands=['start'])
-def start(message):
-    print("🚀🚀🚀 [start] تم استدعاء معالج /start من المستخدم", message.from_user.id)
-    print("🚀🚀🚀 [start] نص الرسالة:", message.text)
+# ========== معالج عام لجميع الرسائل (للتأكد من التقاط /start) ==========
+@bot.message_handler(func=lambda message: True)
+def handle_all_messages(message):
+    print(f"📨 رسالة واردة: {message.text}")
     
-    user_id = message.from_user.id
-    current_node = STORY.get("start", "intro")
-    user_states[user_id] = current_node
+    # إذا كانت الرسالة هي /start نتعامل معها
+    if message.text and message.text.startswith('/start'):
+        print("🚀 تم اكتشاف أمر /start في المعالج العام")
+        
+        user_id = message.from_user.id
+        # نبدأ من العقدة المحددة في "start" أو "intro" كاحتياط
+        current_node = STORY.get("start", "intro")
+        user_states[user_id] = current_node
 
-    node = STORY.get(current_node)
-    if not node:
-        bot.send_message(message.chat.id, "❌ خطأ في القصة!")
-        return
+        node = STORY.get(current_node)
+        if not node:
+            bot.send_message(message.chat.id, "❌ خطأ في القصة: العقدة الابتدائية غير موجودة!")
+            return
 
-    markup = InlineKeyboardMarkup()
-    for btn in node.get("buttons", []):
-        markup.add(InlineKeyboardButton(text=btn["text"], callback_data=btn["next"]))
+        # تجهيز الأزرار
+        markup = InlineKeyboardMarkup()
+        for btn in node.get("buttons", []):
+            markup.add(InlineKeyboardButton(text=btn["text"], callback_data=btn["next"]))
 
-    text = node["text"]
-    image_url = node.get("image")
+        text = node["text"]
+        image_url = node.get("image")
 
-    try:
-        if image_url:
-            bot.send_photo(message.chat.id, photo=image_url, caption=text, reply_markup=markup)
-        else:
-            bot.send_message(message.chat.id, text, reply_markup=markup)
-        print("🚀🚀🚀 [start] تم إرسال الرد بنجاح")
-    except Exception as e:
-        print(f"⚠️ [start] خطأ في الإرسال: {e}")
-        bot.send_message(message.chat.id, f"[تعذر إرسال الصورة]\n\n{text}", reply_markup=markup)
+        # إرسال الرد (صورة أو نص)
+        try:
+            if image_url:
+                bot.send_photo(message.chat.id, photo=image_url, caption=text, reply_markup=markup)
+            else:
+                bot.send_message(message.chat.id, text, reply_markup=markup)
+            print("🚀 تم إرسال رد /start بنجاح")
+        except Exception as e:
+            print(f"⚠️ خطأ في إرسال رد /start: {e}")
+            bot.send_message(message.chat.id, f"[تعذر إرسال الصورة]\n\n{text}", reply_markup=markup)
+    
+    else:
+        # رسالة غير معروفة
+        bot.send_message(message.chat.id, "أهلاً! أرسل /start لبدء القصة.")
 
-# ========== معالج الـ Callback ==========
+# ========== معالج الـ Callback (للأزرار التفاعلية) ==========
 @bot.callback_query_handler(func=lambda call: True)
 def callback(call):
-    print("🚀🚀🚀 [callback] تم استدعاء معالج callback من المستخدم", call.from_user.id)
-    print("🚀🚀🚀 [callback] بيانات callback:", call.data)
+    print("🚀 Callback من المستخدم", call.from_user.id, "البيانات:", call.data)
     
     user_id = call.from_user.id
     next_node_id = call.data
 
+    # إذا كان المستخدم ليس لديه حالة ويحاول الوصول لعقدة غير "start"
     if user_id not in user_states and next_node_id != "start":
         bot.answer_callback_query(call.id, "ابدأ من جديد بـ /start")
         return
 
+    # إذا طلب إعادة التشغيل
     if next_node_id == "start":
+        # ننشئ رسالة وهمية ونمررها للمعالج العام (أو نستدعي start مباشرة)
         fake_message = call.message
         fake_message.from_user = call.from_user
-        start(fake_message)
+        fake_message.text = "/start"
+        handle_all_messages(fake_message)
         return
 
+    # تحديث الحالة
     user_states[user_id] = next_node_id
+
     node = STORY.get(next_node_id)
     if not node:
-        bot.answer_callback_query(call.id, "❌ خطأ في القصة!")
+        bot.answer_callback_query(call.id, "❌ خطأ في القصة: العقدة غير موجودة!")
         return
 
+    # تجهيز الأزرار
     markup = InlineKeyboardMarkup()
     for btn in node.get("buttons", []):
         markup.add(InlineKeyboardButton(text=btn["text"], callback_data=btn["next"]))
@@ -94,6 +111,7 @@ def callback(call):
     text = node["text"]
     image_url = node.get("image")
 
+    # محاولة تعديل الرسالة الحالية (إن أمكن)
     try:
         if image_url:
             bot.edit_message_media(
@@ -109,21 +127,23 @@ def callback(call):
                 text=text,
                 reply_markup=markup
             )
-        print("🚀🚀🚀 [callback] تم تعديل الرسالة بنجاح")
+        print("🚀 تم تعديل الرسالة بنجاح")
     except Exception as e:
-        print(f"⚠️ [callback] فشل التعديل، إرسال رسالة جديدة: {e}")
+        print(f"⚠️ فشل التعديل، إرسال رسالة جديدة: {e}")
         try:
             if image_url:
                 bot.send_photo(call.message.chat.id, photo=image_url, caption=text, reply_markup=markup)
             else:
                 bot.send_message(call.message.chat.id, text, reply_markup=markup)
-            print("🚀🚀🚀 [callback] تم إرسال رسالة جديدة بنجاح")
+            print("🚀 تم إرسال رسالة جديدة بنجاح")
         except Exception as e2:
-            print(f"⚠️ [callback] فشل إرسال الرسالة الجديدة: {e2}")
+            print(f"⚠️ فشل إرسال الرسالة الجديدة: {e2}")
             bot.send_message(call.message.chat.id, f"[تعذر إرسال الصورة]\n\n{text}", reply_markup=markup)
 
+    # الرد على callback
     bot.answer_callback_query(call.id)
 
+    # إذا كانت نهاية القصة، نعرض زر إعادة
     if node.get("end"):
         replay_markup = InlineKeyboardMarkup()
         replay_markup.add(InlineKeyboardButton("🔄 العب مرة أخرى", callback_data="start"))
@@ -136,29 +156,17 @@ def index():
 
 @app.route('/', methods=['POST'])
 def webhook():
-    print("📨 [webhook] تم استلام طلب POST جديد")
     if request.headers.get('content-type') != 'application/json':
-        print("❌ [webhook] نوع المحتوى غير صحيح:", request.headers.get('content-type'))
         abort(403)
     
     try:
         json_string = request.get_data().decode('utf-8')
-        print("📨 [webhook] طول البيانات:", len(json_string))
-        print("📨 [webhook] أول 300 حرف من البيانات:", json_string[:300])
-        
+        print("📨 تم استلام POST, طول:", len(json_string))
         update = Update.de_json(json_string)
-        print("📨 [webhook] تم تحويل JSON إلى Update بنجاح")
-        print("📨 [webhook] نوع التحديث:", type(update))
-        
-        if hasattr(update, 'message') and update.message:
-            print("📨 [webhook] الرسالة:", update.message.text)
-        
-        # معالجة التحديث
         bot.process_new_updates([update])
-        print("📨 [webhook] تم تمرير التحديث إلى البوت")
         return ''
     except Exception as e:
-        print(f"❌ [webhook] خطأ أثناء معالجة التحديث: {e}")
+        print(f"❌ خطأ في معالجة webhook: {e}")
         return '', 500
 
 @app.route('/debug')
@@ -174,46 +182,40 @@ def debug():
                 "pending_updates": webhook_info.pending_update_count,
                 "last_error": webhook_info.last_error_message
             },
-            "handlers_count": {
-                "message": len(bot.message_handlers),
-                "callback": len(bot.callback_query_handlers)
-            },
-            "message_handlers_commands": [
-                h['filters'].commands if h['filters'] and hasattr(h['filters'], 'commands') else None 
-                for h in bot.message_handlers
-            ]
+            "message_handlers_count": len(bot.message_handlers),
+            "callback_handlers_count": len(bot.callback_query_handlers)
         }
     except Exception as e:
         return {"error": str(e)}
 
-# ========== التأكد من أن المعالجات مسجلة قبل إعداد webhook ==========
-print("🔧 [init] تم تسجيل معالجات البوت")
-print(f"🔧 [init] عدد معالجات الرسائل المسجلة: {len(bot.message_handlers)}")
-print(f"🔧 [init] عدد معالجات callback المسجلة: {len(bot.callback_query_handlers)}")
+@app.route('/check_webhook')
+def check_webhook():
+    try:
+        info = bot.get_webhook_info()
+        return {
+            "webhook_url": info.url,
+            "pending_updates": info.pending_update_count,
+            "last_error": info.last_error_message,
+            "is_working": info.url == f"{APP_URL}/"
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 # ========== إعداد webhook بعد تعريف جميع المعالجات ==========
 def setup_webhook():
-    """إزالة webhook القديم وتعيين الجديد"""
-    print("🔧 [setup] جاري إزالة webhook القديم...")
+    print("🔧 جاري إزالة webhook القديم...")
     bot.remove_webhook()
     webhook_url = f"{APP_URL}/"
-    print(f"🔧 [setup] تعيين webhook إلى: {webhook_url}")
-    result = bot.set_webhook(url=webhook_url)
-    print(f"🔧 [setup] نتيجة تعيين webhook: {result}")
-    
-    # تأخير بسيط ثم التحقق
-    time.sleep(2)
+    print(f"🔧 تعيين webhook إلى: {webhook_url}")
+    bot.set_webhook(url=webhook_url)
+    time.sleep(1)  # تأخير بسيط
     info = bot.get_webhook_info()
-    print("🔧 [setup] معلومات webhook بعد التعيين:", info)
-
-# استيراد time للتأخير
-import time
+    print("🔧 معلومات webhook بعد التعيين:", info)
+    print(f"🔧 عدد معالجات الرسائل المسجلة: {len(bot.message_handlers)}")
+    print(f"🔧 عدد معالجات callback المسجلة: {len(bot.callback_query_handlers)}")
 
 # استدعاء إعداد webhook
 setup_webhook()
-
-# تأكيد نهائي
-print("🔧 [init] ✅ تم الانتهاء من التهيئة. البوت جاهز لاستقبال الأوامر.")
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
