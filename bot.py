@@ -17,7 +17,7 @@ app = Flask(__name__)
 try:
     with open("story.json", encoding="utf-8") as f:
         STORY = json.load(f)
-    print("✅ story.json loaded successfully")
+    print("✅ story.json loaded successfully. Keys:", list(STORY.keys()))
 except Exception as e:
     print("❌ Error loading story.json:", e)
     STORY = {
@@ -38,7 +38,7 @@ def setup_webhook():
     print("🔗 Webhook set to:", webhook_url)
     print("ℹ️ Webhook info:", info)
 
-# تنفيذ إعداد webhook فورًا (سيتم مرة واحدة لكل عملية)
+# تنفيذ إعداد webhook فورًا
 setup_webhook()
 
 @bot.message_handler(commands=['start'])
@@ -47,54 +47,58 @@ def start(message):
     user_id = message.from_user.id
     current_node = STORY.get("start", "intro")
     user_states[user_id] = current_node
-    
+
     node = STORY.get(current_node)
     if not node:
         bot.send_message(message.chat.id, "❌ خطأ في القصة!")
         return
-    
+
     markup = InlineKeyboardMarkup()
     for btn in node.get("buttons", []):
         markup.add(InlineKeyboardButton(text=btn["text"], callback_data=btn["next"]))
-    
+
     text = node["text"]
     image_url = node.get("image")
-    
-    if image_url:
-        bot.send_photo(message.chat.id, photo=image_url, caption=text, reply_markup=markup)
-    else:
-        bot.send_message(message.chat.id, text, reply_markup=markup)
+
+    try:
+        if image_url:
+            bot.send_photo(message.chat.id, photo=image_url, caption=text, reply_markup=markup)
+        else:
+            bot.send_message(message.chat.id, text, reply_markup=markup)
+    except Exception as e:
+        print(f"⚠️ Error sending photo in start: {e}")
+        bot.send_message(message.chat.id, f"[تعذر إرسال الصورة]\n\n{text}", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback(call):
-    # ... (نفس الكود السابق مع تحسينات)
+    print("📞 Callback from user", call.from_user.id, "data:", call.data)
     user_id = call.from_user.id
     next_node_id = call.data
-    
+
     if user_id not in user_states and next_node_id != "start":
         bot.answer_callback_query(call.id, "ابدأ من جديد بـ /start")
         return
-    
+
     if next_node_id == "start":
         # محاكاة أمر /start
         fake_message = call.message
         fake_message.from_user = call.from_user
         start(fake_message)
         return
-    
+
     user_states[user_id] = next_node_id
     node = STORY.get(next_node_id)
     if not node:
         bot.answer_callback_query(call.id, "❌ خطأ في القصة!")
         return
-    
+
     markup = InlineKeyboardMarkup()
     for btn in node.get("buttons", []):
         markup.add(InlineKeyboardButton(text=btn["text"], callback_data=btn["next"]))
-    
+
     text = node["text"]
     image_url = node.get("image")
-    
+
     try:
         if image_url:
             bot.edit_message_media(
@@ -112,13 +116,17 @@ def callback(call):
             )
     except Exception as e:
         print("⚠️ Edit failed, sending new message:", e)
-        if image_url:
-            bot.send_photo(call.message.chat.id, photo=image_url, caption=text, reply_markup=markup)
-        else:
-            bot.send_message(call.message.chat.id, text, reply_markup=markup)
-    
+        try:
+            if image_url:
+                bot.send_photo(call.message.chat.id, photo=image_url, caption=text, reply_markup=markup)
+            else:
+                bot.send_message(call.message.chat.id, text, reply_markup=markup)
+        except Exception as e2:
+            print(f"⚠️ Also failed to send new message: {e2}")
+            bot.send_message(call.message.chat.id, f"[تعذر إرسال الصورة]\n\n{text}", reply_markup=markup)
+
     bot.answer_callback_query(call.id)
-    
+
     if node.get("end"):
         replay_markup = InlineKeyboardMarkup()
         replay_markup.add(InlineKeyboardButton("🔄 العب مرة أخرى", callback_data="start"))
@@ -132,15 +140,21 @@ def index():
 def webhook():
     if request.headers.get('content-type') == 'application/json':
         json_string = request.get_data().decode('utf-8')
+        print("📨 Received POST, length:", len(json_string))
         update = Update.de_json(json_string)
         bot.process_new_updates([update])
         return ''
     else:
         abort(403)
 
-@app.route('/test')
-def test():
-    return '✅ Test endpoint works'
+@app.route('/debug')
+def debug():
+    return {
+        "story_loaded": bool(STORY),
+        "story_keys": list(STORY.keys()) if STORY else [],
+        "has_intro": "intro" in STORY,
+        "has_start": "start" in STORY
+    }
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
